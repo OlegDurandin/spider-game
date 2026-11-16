@@ -1,11 +1,18 @@
 <!-- BEGIN spider-game deployment -->
-## Паук / spider-web
+## Пасьянс на вечер / spider-web
 
 Развёрнут 14.11.2026, HTTPS и healthcheck проверены. Первая выкладка:
 `spider-web:local-929e3cd2ecb6` (nginx-образ из проверенной WASM-сборки, не из GHCR).
 Caddy backup: `/opt/bots/backups/spider-20261114T184517Z/Caddyfile.before`.
 
-Пасьянс на 1, 2 и 4 масти: Rust + Leptos CSR/WASM. Личные партии Telegram
+Обновлено 16.11.2026 до версии 1.3. Web: `spider-web:local-ae897d93034f`,
+API: `spider-api:local-e54895ba3d00`. Перед обновлением сохранена SQLite-копия,
+предыдущие образы и Caddy — `/opt/bots/backups/spider-20261116T120241Z/`.
+
+Версия 1.3: «Паук» на 1, 2 и 4 масти, «Косынка» и «Три пика».
+Rust + Leptos CSR/WASM. У всех трёх игр отдельные обычные партии;
+повтор и ссылки воспроизводят исходную раздачу. «Расклад дня» остаётся Пауком.
+Личные партии Telegram
 синхронизируются через Rust API и SQLite; гостевые партии остаются в localStorage.
 Токен бота используется только API и никогда не попадает в frontend.
 VPS `85.137.95.37`, контейнер `spider-web`, `127.0.0.1:8094 → 8080`, HTTPS
