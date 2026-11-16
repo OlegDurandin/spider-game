@@ -1,0 +1,27 @@
+/target/
+/web/dist/
+.env
+.env.*
+!.env.example
+.DS_Store
+
+# Local dependencies, caches and build staging
+**/node_modules/
+**/__pycache__/
+*.py[cod]
+/web/.stage/
+
+# Local credentials, databases and backups
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+*.sqlite3-shm
+*.sqlite3-wal
+*.bak
+.aws/

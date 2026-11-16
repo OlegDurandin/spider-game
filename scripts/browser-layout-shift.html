@@ -1,0 +1,35 @@
+<!doctype html><meta charset="utf-8"><title>Паук · проверка дрожания</title>
+<style>body{margin:0;background:#18291f;color:#fff;font:14px system-ui;display:flex;flex-direction:column;align-items:center;gap:8px}iframe{border:0;width:390px;height:540px}button{padding:8px}pre{white-space:pre-wrap;width:390px;height:64px;overflow:auto;overflow-wrap:anywhere}</style>
+<button id="prepare">Подготовить длинный расклад</button><button id="record">Начать замер</button><pre id="report">Ожидание</pre><iframe src="/?demo=1"></iframe>
+<script>
+const frame=document.querySelector('iframe'),report=document.querySelector('#report');
+document.querySelector('#prepare').onclick=()=>{
+ const ranks=[6,5,4,7],rest=Array.from({length:104},(_,i)=>i).filter(id=>!ranks.includes(id));
+ const take=n=>rest.splice(0,n).map(id=>({id,open:true}));
+ const columns=[take(17).concat([6,5,4].map(id=>({id,open:true}))),take(19).concat([{id:7,open:true}]),...Array.from({length:8},(_,i)=>take(i<6?2:1))];
+ localStorage.setItem('spider.game.v1',JSON.stringify({version:2,state:{mode:'one',columns,stock:rest.map(id=>({id,open:false})),completed:[],moves:0},history:[]}));
+ frame.src='/?jitter-fixture=1';frame.onload=()=>{function ready(){if(!frame.contentDocument.querySelector(".table-scroll")){requestAnimationFrame(ready);return;}if(location.search.includes('anchor=off')) frame.contentDocument.querySelector('.table-scroll').style.overflowAnchor='none';frame.contentDocument.querySelector('.table-scroll').scrollTop=170;
+ const d=frame.contentDocument,bar=d.querySelector('.account-bar'),span=bar.querySelector('span');
+ span.textContent='Аккаунт Telegram · прогресс сохранён';const button=d.createElement('button');button.className='text-button';button.textContent='Перенести прежнюю партию';(bar.querySelector('.account-actions')||bar).appendChild(button);d.querySelector('.table-scroll').scrollTop=100000;
+ d.addEventListener('click',()=>{span.textContent='Сохраняем прогресс…';setTimeout(()=>span.textContent='Аккаунт Telegram · прогресс сохранён',800);});
+report.textContent='Расклад готов; источник: 7 в столбце 1, цель: 8 в столбце 2';}ready();};
+};
+document.querySelector('#record').onclick=()=>{
+ const d=frame.contentDocument,table=d.querySelector('.table-scroll'),column=d.querySelector('.column'),anchor=d.querySelector('.column:nth-child(2) .card:nth-of-type(19)'),start=performance.now();
+ const first={y:table.getBoundingClientRect().y,scroll:table.scrollTop,anchor:anchor.getBoundingClientRect().y,height:table.scrollHeight};let maxY=0,maxScroll=0,maxAnchor=0,maxOverflow=0,replaced=0,frames=0,stackFrames=0,maxStackGapError=0,stackOrderOK=true;
+ const obs=new MutationObserver(()=>{if(!column.isConnected)replaced=1;});obs.observe(d.querySelector('.columns'),{childList:true,subtree:true});
+ function tick(){frames++;
+ const ids=[6,5,4],flying=ids.map(id=>d.querySelector(`.flight-card[data-flight-id="${id}"]`)),real=ids.map(id=>d.querySelector(`.columns .card[data-card-id="${id}"]`));
+ if(flying.every(Boolean)&&real.every(Boolean)){
+  stackFrames++;
+  const paint=[...d.querySelectorAll('.flight-card[data-flight-id]')].filter(el=>ids.includes(Number(el.dataset.flightId))).map(el=>Number(el.dataset.flightId));
+  stackOrderOK=stackOrderOK&&paint.join(',')===ids.join(',');
+  for(let i=1;i<3;i++)maxStackGapError=Math.max(maxStackGapError,Math.abs((flying[i].getBoundingClientRect().top-flying[i-1].getBoundingClientRect().top)-(real[i].getBoundingClientRect().top-real[i-1].getBoundingClientRect().top)));
+ }
+maxOverflow=Math.max(maxOverflow,table.scrollHeight-first.height);maxY=Math.max(maxY,Math.abs(table.getBoundingClientRect().y-first.y));maxScroll=Math.max(maxScroll,Math.abs(table.scrollTop-first.scroll));
+ const current=d.querySelector(`.card[data-card-id="${anchor.dataset.cardId}"]`);if(current)maxAnchor=Math.max(maxAnchor,Math.abs(current.getBoundingClientRect().y-first.anchor));
+ report.textContent=JSON.stringify({frames,tableShift:maxY,scrollShift:maxScroll,stationaryCardShift:maxAnchor,maxOverflow,stackFrames,maxStackGapError,stackOrderOK,columnReplaced:!!replaced,scroll:table.scrollTop,height:table.scrollHeight,initialHeight:first.height,hiddenCards:d.querySelectorAll('.columns .motion-hidden').length,flightCards:d.querySelectorAll('.flight-card').length,targetBottom:d.querySelector('.column:nth-child(2) .card[data-card-id="7"]')?.getBoundingClientRect().bottom,tableBottom:table.getBoundingClientRect().bottom});
+ if(performance.now()-start<15000)requestAnimationFrame(tick);else obs.disconnect();}
+ requestAnimationFrame(tick);
+};
+</script>

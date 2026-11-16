@@ -1,0 +1,71 @@
+name: spider-game
+services:
+  web:
+    build:
+      context: .
+      target: runtime
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8080:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 64m
+    restart: unless-stopped
+    init: true
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  api:
+    build:
+      context: .
+      target: api
+    env_file: .env
+    environment:
+      SPIDER_DB: /data/spider.sqlite3
+    volumes:
+      - user-data:/data
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 192m
+    restart: unless-stopped
+    init: true
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+  platform-test:
+    image: node:24-alpine
+    profiles: [tools]
+    user: node
+    working_dir: /src
+    read_only: true
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    volumes:
+      - ./scripts:/src/scripts:ro
+      - ./web/public:/src/web/public:ro
+    command: sh -c "node scripts/platform-test.mjs && node scripts/sharing-test.mjs"
+  test:
+    image: rust:1.95-bookworm
+    profiles: [tools]
+    working_dir: /src
+    volumes:
+      - .:/src:ro
+      - cargo-registry:/usr/local/cargo/registry
+      - test-target:/target
+    environment:
+      CARGO_TARGET_DIR: /target
+    command: cargo test --workspace --locked
+volumes:
+  user-data:
+  cargo-registry:
+  test-target:

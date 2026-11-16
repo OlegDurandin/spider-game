@@ -1,0 +1,47 @@
+name: spider-web
+services:
+  web:
+    image: ${IMAGE:?use deployment script or bots.sh}
+    container_name: spider-web
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8094:8080"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    init: true
+    mem_limit: 64m
+    labels:
+      bots.heal: "true"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+  api:
+    image: ${API_IMAGE:-spider-api:local}
+    container_name: spider-api
+    env_file: .env
+    environment:
+      SPIDER_DB: /data/spider.sqlite3
+    volumes:
+      - user-data:/data
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    init: true
+    mem_limit: 192m
+    labels:
+      bots.heal: "true"
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+volumes:
+  user-data:

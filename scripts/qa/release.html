@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><title>Паук · приёмка 1.1</title>
+<style>body{margin:0;background:#192a21;color:#f4e6bd;font:13px system-ui;display:flex;flex-direction:column;align-items:center;gap:6px}nav{max-width:900px;text-align:center}button{margin:3px;padding:7px}pre{width:700px;max-width:95vw;height:68px;overflow:auto;white-space:pre-wrap}iframe{border:0;width:390px;height:844px}</style>
+<nav><button data-fixture="mixed">Смешанный хвост</button><button data-fixture="legacy-2">Старая партия 2</button><button data-fixture="legacy-4">Старая партия 4</button><button data-fixture="published-win">Победа</button><br><button data-mode="1">Код 1</button><button data-mode="2">Код 2</button><button data-mode="4">Код 4</button><button id="invalid">Повреждённая ссылка</button><br><button id="capture">Запомнить партии</button><button id="reload">Перезапустить игру</button><button id="assess">Проверить состояние</button></nav>
+<pre id="report">Готово к проверке</pre><iframe src="/?qa=1"></iframe>
+<script>
+const frame=document.querySelector('iframe'),report=document.querySelector('#report'),base='spider.game.v1';let captured=null,expectedMode=null;
+const active=()=>localStorage.getItem(base+'.active')||'regular';
+const key=()=>active()==='regular'?base:base+'.'+active();
+const current=()=>{const raw=JSON.parse(localStorage.getItem(key())||'null');return raw?.game||raw;};
+const snapshot=()=>Object.fromEntries(Object.keys(localStorage).filter(k=>k===base||k.startsWith(base+'.daily_')||k.startsWith(base+'.challenge_')).filter(k=>!k.includes('.conflict.')).sort().map(k=>[k,JSON.parse(localStorage.getItem(k))]));
+for(const button of document.querySelectorAll('[data-fixture]'))button.onclick=async()=>{
+ const g=await(await fetch('/fixtures/'+button.dataset.fixture+'.json')).json();localStorage.setItem(base,JSON.stringify(g));localStorage.removeItem(base+'.active');expectedMode=null;frame.src='/?qa='+Date.now();report.textContent='Открыта тестовая партия '+button.dataset.fixture;
+};
+for(const button of document.querySelectorAll('[data-mode]'))button.onclick=()=>{expectedMode=button.dataset.mode;frame.src='/?deal=s1_'+expectedMode+'_0123456789abcdef';report.textContent='Откройте приглашение кнопкой «Играть»';};
+document.querySelector('#capture').onclick=()=>{captured=snapshot();report.textContent='Снимок сохранён: '+Object.keys(captured).join(', ');};
+document.querySelector('#invalid').onclick=()=>{captured=snapshot();frame.src='/?deal=s9_4_bad';};
+document.querySelector('#reload').onclick=()=>frame.contentWindow.location.reload();
+document.querySelector('#assess').onclick=async()=>{
+ try{
+  const g=current(),d=frame.contentDocument,targets=[...d.querySelectorAll('.column')].flatMap((c,i)=>c.classList.contains('target')?[i]:[]);
+  const ring=d.querySelector('.selection-ring'),seven=d.querySelector('.card[data-card-id="19"]'),six=d.querySelector('.card[data-card-id="18"]');
+  let selectionExact=null;if(ring&&seven&&six){const r=ring.getBoundingClientRect(),a=seven.getBoundingClientRect(),b=six.getBoundingClientRect();selectionExact=Math.abs(r.top-a.top)<.1&&Math.abs(r.height-(b.bottom-a.top))<.1;}
+  const gold=await(await fetch('/fixtures/seed-v1.json')).json();let goldenMatch=null;
+  if(expectedMode){const mode={'1':'one','2':'two','4':'four'}[expectedMode];goldenMatch=JSON.stringify(g.state)===JSON.stringify(gold[mode]);}
+  let preserved=null;if(captured){const now=snapshot();preserved=Object.entries(captured).every(([k,v])=>JSON.stringify(now[k])===JSON.stringify(v));}
+  report.textContent=JSON.stringify({active:active(),version:g.version,mode:g.state.mode,moves:g.state.moves,undo:g.history.length,deal:g.deal,targets,selectionExact,goldenMatch,preserved,stock:g.state.stock.length,completed:g.state.completed.length,bestP1:localStorage.getItem(base+'.best.p1_0')});
+ }catch(e){report.textContent='ERROR '+e.message;}
+};
+</script>

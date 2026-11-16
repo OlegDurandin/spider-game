@@ -1,0 +1,12 @@
+# BEGIN spider-game (managed from spider-game/deploy/bots-server)
+spider.85-137-95-37.sslip.io {
+    reverse_proxy 127.0.0.1:8094
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        -Server
+    }
+}
+# END spider-game

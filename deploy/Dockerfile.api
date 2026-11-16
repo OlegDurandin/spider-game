@@ -1,0 +1,19 @@
+# Build the native API on the VPS architecture, without frontend tooling.
+FROM rust:1.95-trixie AS build
+WORKDIR /build
+COPY Cargo.toml Cargo.lock ./
+COPY engine ./engine
+COPY server ./server
+COPY web/Cargo.toml ./web/Cargo.toml
+RUN mkdir -p web/src && touch web/src/main.rs
+RUN --mount=type=cache,id=spider-api-target,target=/build/target,sharing=locked \
+    --mount=type=cache,id=spider-api-registry,target=/usr/local/cargo/registry,sharing=locked \
+    CARGO_BUILD_JOBS=2 cargo test --locked -p spider-server && \
+    CARGO_BUILD_JOBS=2 cargo build --release --locked -p spider-server && cp target/release/spider-server /build/spider-server
+FROM debian:trixie-slim
+RUN mkdir /data && chown 65532:65532 /data
+COPY --from=build /build/spider-server /usr/local/bin/spider-server
+USER 65532:65532
+EXPOSE 8082
+HEALTHCHECK --interval=20s --timeout=3s --start-period=5s --retries=3 CMD ["/usr/local/bin/spider-server", "--healthcheck"]
+ENTRYPOINT ["/usr/local/bin/spider-server"]
