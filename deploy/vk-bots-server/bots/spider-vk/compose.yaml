@@ -1,0 +1,36 @@
+name: spider-vk
+services:
+  web:
+    image: ${IMAGE:?use deploy/vk/deploy.sh}
+    container_name: spider-vk-web
+    depends_on:
+      api: {condition: service_healthy}
+    ports: ["127.0.0.1:8094:8080"]
+    read_only: true
+    tmpfs: ["/tmp:size=16m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    init: true
+    mem_limit: 64m
+    labels: {bots.heal: "true"}
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
+  api:
+    image: ${API_IMAGE:-spider-vk-api:local}
+    container_name: spider-vk-api
+    env_file: .env
+    environment:
+      SPIDER_DB: /data/spider.sqlite3
+      TELEGRAM_BOT_TOKEN: ""
+    volumes: [user-data:/data]
+    read_only: true
+    tmpfs: [/tmp:size=16m]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    restart: unless-stopped
+    init: true
+    mem_limit: 192m
+    labels: {bots.heal: "true"}
+    logging: {driver: json-file, options: {max-size: "10m", max-file: "3"}}
+volumes:
+  user-data:

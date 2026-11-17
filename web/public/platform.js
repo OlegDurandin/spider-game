@@ -40,6 +40,10 @@
     load('https://unpkg.com/@vkontakte/vk-bridge@2.15.11/dist/browser.min.js').then(() => {
       const bridge = window.vkBridge?.default || window.vkBridge;
       bridge?.subscribe?.(({ detail }) => {
+        if (detail?.type === 'VKWebAppLocationChanged' && typeof detail.data?.location === 'string') {
+          location.hash = '#' + detail.data.location.replace(/^#/, '');
+          window.dispatchEvent?.(new Event('hashchange'));
+        }
         const insets = detail?.data?.insets;
         if (!insets) return;
         document.documentElement.style.setProperty('--platform-top', `${insets.top || 0}px`);

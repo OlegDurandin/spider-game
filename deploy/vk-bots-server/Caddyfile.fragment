@@ -1,0 +1,13 @@
+# BEGIN spider-vk (managed from spider-game/deploy/vk-bots-server)
+spider.62-109-4-100.sslip.io {
+    reverse_proxy 127.0.0.1:8094
+    encode zstd gzip
+    header {
+        Strict-Transport-Security "max-age=31536000"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "no-referrer"
+        -Server
+    }
+    # No request URL logging: VK launch URLs contain the signed identity proof.
+}
+# END spider-vk

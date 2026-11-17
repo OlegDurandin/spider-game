@@ -22,3 +22,6 @@ for(const klondike of ['k1_1_0123456789abcdef','k1_1_ffffffffffffffff','t1_1_012
  assert.equal(run('?vk_app_id=123','#/deal/'+klondike).window.spiderDealLink(klondike),'https://vk.com/app123#/deal/'+klondike);
 }
 console.log('Klondike and TriPeaks codes preserve exact u64 strings across all three adapters.');
+r=run('?vk_app_id=123','',{vkBridge:{send:async(method,args)=>{assert.equal(method,'VKWebAppCopyText');assert.equal(args.text,'public-link');return {result:true};}}});
+assert.equal(await r.window.spiderCopyLink('public-link'),true);
+console.log('VK copies public links through VKWebAppCopyText.');

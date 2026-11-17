@@ -44,6 +44,10 @@
   return url;
  };
  window.spiderCopyLink=async url=>{
+  if(vk()){
+   const bridge=window.vkBridge?.default||window.vkBridge;
+   if(bridge?.send){try{await bridge.send('VKWebAppCopyText',{text:url});return true;}catch{}}
+  }
   try {if(!window.navigator?.clipboard?.writeText)return false;await window.navigator.clipboard.writeText(url);return true;}catch{return false;}
  };
 })();

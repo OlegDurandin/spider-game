@@ -1671,6 +1671,7 @@ name = "spider-server"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64",
  "hex",
  "hmac",
  "http-body-util",

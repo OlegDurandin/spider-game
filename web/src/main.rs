@@ -379,7 +379,7 @@ fn App() -> impl IntoView {
             <Show when=move ||import_confirm.get()>
                 <div class="overlay"><section class="modal" role="dialog" aria-modal="true" aria-label="Перенос прежней партии">
                     <h2>"Это ваша прежняя партия?"</h2>
-                    <p>"На устройстве есть партия без привязки к аккаунту. Перенести её в текущий аккаунт Telegram? Текущая партия будет заменена."</p>
+                    <p>"На устройстве есть партия без привязки к аккаунту. Перенести её в текущий аккаунт? Текущая партия будет заменена."</p>
                     <button class="primary" on:click=move |_|{
                         if let Some(old)=account::legacy(){drag::cancel();motion::cancel();selection.set(None);new_mode.set(old.spider_mode());session.set(old.clone());if persist_session(&old).is_err(){notice.set("Локальное сохранение недоступно".into());}}
                         account::dismiss_legacy();legacy_available.set(false);import_confirm.set(false);

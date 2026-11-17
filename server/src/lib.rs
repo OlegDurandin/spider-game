@@ -1,3 +1,4 @@
+pub mod vk;
 use axum::{
     Json, Router,
     extract::{DefaultBodyLimit, Path, State},
@@ -21,6 +22,7 @@ type ApiError = (StatusCode, &'static str);
 pub struct AppState {
     pub db: Arc<Mutex<Connection>>,
     pub token: Arc<str>,
+    pub vk: Option<vk::Config>,
 }
 #[derive(Serialize, Deserialize)]
 pub struct UserGame {
@@ -49,9 +51,19 @@ pub fn database(path: &str) -> rusqlite::Result<Connection> {
           game TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(user_id,slot)
         );",
     )?;
+    db.execute_batch("CREATE TABLE IF NOT EXISTS vk_games (user_id INTEGER PRIMARY KEY, revision INTEGER NOT NULL CHECK(revision > 0), game TEXT NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE TABLE IF NOT EXISTS vk_game_slots (user_id INTEGER NOT NULL, slot TEXT NOT NULL, revision INTEGER NOT NULL CHECK(revision > 0), game TEXT NOT NULL, updated_at INTEGER NOT NULL, PRIMARY KEY(user_id,slot));")?;
     Ok(db)
 }
 pub fn router(db: Connection, token: String) -> Router {
+    router_with_vk(db, token, None, vec![])
+}
+pub fn router_with_vk(
+    db: Connection,
+    token: String,
+    vk: Option<vk::Config>,
+    origins: Vec<String>,
+) -> Router {
     Router::new()
         .route("/healthz", get(|| async { "ok\n" }))
         .route("/api/game", get(load).put(save))
@@ -65,9 +77,68 @@ pub fn router(db: Connection, token: String) -> Router {
                 response
             },
         ))
+        .layer(axum::middleware::from_fn(
+            move |req: axum::extract::Request, next: axum::middleware::Next| {
+                let origins = origins.clone();
+                async move {
+                    let origin = req
+                        .headers()
+                        .get("origin")
+                        .and_then(|v| v.to_str().ok())
+                        .map(str::to_string);
+                    let api = req.uri().path().starts_with("/api/");
+                    let same_origin = req
+                        .headers()
+                        .get("host")
+                        .and_then(|h| h.to_str().ok())
+                        .is_some_and(|h| {
+                            origin.as_ref().is_some_and(|o| {
+                                o == &format!("https://{h}") || o == &format!("http://{h}")
+                            })
+                        });
+                    if api && !same_origin && origin.as_ref().is_some_and(|o| !origins.contains(o))
+                    {
+                        return axum::response::IntoResponse::into_response((
+                            StatusCode::FORBIDDEN,
+                            "Origin not allowed",
+                        ));
+                    }
+                    let mut response = if api && req.method() == axum::http::Method::OPTIONS {
+                        axum::response::IntoResponse::into_response(StatusCode::NO_CONTENT)
+                    } else {
+                        next.run(req).await
+                    };
+                    if api {
+                        if let Some(origin) = origin {
+                            if let Ok(v) = origin.parse() {
+                                response
+                                    .headers_mut()
+                                    .insert("access-control-allow-origin", v);
+                            }
+                            response
+                                .headers_mut()
+                                .insert("vary", "Origin".parse().unwrap());
+                            response.headers_mut().insert(
+                                "access-control-allow-methods",
+                                "GET, PUT, OPTIONS".parse().unwrap(),
+                            );
+                            response.headers_mut().insert(
+                                "access-control-allow-headers",
+                                "Authorization, Content-Type".parse().unwrap(),
+                            );
+                            response
+                                .headers_mut()
+                                .insert("access-control-max-age", "600".parse().unwrap());
+                        }
+                    }
+                    response
+                }
+            },
+        ))
         .with_state(AppState {
             db: Arc::new(Mutex::new(db)),
             token: token.into(),
+            vk,
         })
 }
 fn now() -> u64 {
@@ -123,16 +194,44 @@ pub fn authenticate(data: &str, token: &str, now: u64) -> Result<i64, &'static s
     }
     Ok(user.id)
 }
-fn user(headers: &HeaderMap, state: &AppState) -> Result<i64, ApiError> {
-    let data = headers
+#[derive(Clone, Copy)]
+struct Account {
+    id: i64,
+    vk: bool,
+}
+impl Account {
+    fn games(self) -> &'static str {
+        if self.vk { "vk_games" } else { "games" }
+    }
+    fn slots(self) -> &'static str {
+        if self.vk {
+            "vk_game_slots"
+        } else {
+            "game_slots"
+        }
+    }
+}
+fn user(headers: &HeaderMap, state: &AppState) -> Result<Account, ApiError> {
+    let proof = headers
         .get("authorization")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("tma "))
-        .ok_or((StatusCode::UNAUTHORIZED, "Open the game in Telegram"))?;
-    authenticate(data, &state.token, now()).map_err(|_| {
+        .ok_or((StatusCode::UNAUTHORIZED, "Open the game from its platform"))?;
+    let account = if let Some(data) = proof.strip_prefix("tma ") {
+        authenticate(data, &state.token, now()).map(|id| Account { id, vk: false })
+    } else if let Some(data) = proof.strip_prefix("vk ") {
+        state
+            .vk
+            .as_ref()
+            .ok_or("VK disabled")
+            .and_then(|c| vk::verify(data, c, now()))
+            .map(|id| Account { id, vk: true })
+    } else {
+        Err("unknown platform")
+    };
+    account.map_err(|_| {
         (
             StatusCode::UNAUTHORIZED,
-            "Invalid or expired Telegram session",
+            "Invalid or expired platform session",
         )
     })
 }
@@ -160,19 +259,26 @@ async fn load_for(
     if !spider_engine::deal::valid_slot(&slot) {
         return Err((StatusCode::BAD_REQUEST, "Invalid slot"));
     }
-    let id = user(&headers, &state)?;
+    let account = user(&headers, &state)?;
+    let id = account.id;
     tokio::task::spawn_blocking(move || {
         let db = state.db.lock().map_err(internal)?;
         let row: Option<(i64, String)> = if slot == "regular" {
             db.query_row(
-                "SELECT revision,game FROM games WHERE user_id=?1",
+                &format!(
+                    "SELECT revision,game FROM {} WHERE user_id=?1",
+                    account.games()
+                ),
                 [id],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()
         } else {
             db.query_row(
-                "SELECT revision,game FROM game_slots WHERE user_id=?1 AND slot=?2",
+                &format!(
+                    "SELECT revision,game FROM {} WHERE user_id=?1 AND slot=?2",
+                    account.slots()
+                ),
                 params![id, slot],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
@@ -216,7 +322,8 @@ async fn save_for(
     if !spider_engine::deal::valid_slot(&slot) {
         return Err((StatusCode::BAD_REQUEST, "Invalid slot"));
     }
-    let id = user(&headers, &state)?;
+    let account = user(&headers, &state)?;
+    let id = account.id;
     input.game = Session::restore(&serde_json::to_string(&input.game).map_err(internal)?)
         .map_err(|_| (StatusCode::UNPROCESSABLE_ENTITY, "Invalid game"))?;
     if !input.game.fits_slot(&slot) {
@@ -238,12 +345,12 @@ async fn save_for(
         let db = state.db.lock().map_err(internal)?;
         let json=serde_json::to_string(&input.game).map_err(internal)?;
         let changed = if slot!="regular" {
-            if input.revision==0 {db.execute("INSERT INTO game_slots(user_id,slot,revision,game,updated_at) VALUES(?1,?2,1,?3,?4) ON CONFLICT(user_id,slot) DO NOTHING",params![id,slot,json,now() as i64])}
-            else {db.execute("UPDATE game_slots SET revision=revision+1,game=?3,updated_at=?4 WHERE user_id=?1 AND slot=?2 AND revision=?5",params![id,slot,json,now() as i64,input.revision])}
+            if input.revision==0 {db.execute(&format!("INSERT INTO {}(user_id,slot,revision,game,updated_at) VALUES(?1,?2,1,?3,?4) ON CONFLICT(user_id,slot) DO NOTHING",account.slots()),params![id,slot,json,now() as i64])}
+            else {db.execute(&format!("UPDATE {} SET revision=revision+1,game=?3,updated_at=?4 WHERE user_id=?1 AND slot=?2 AND revision=?5",account.slots()),params![id,slot,json,now() as i64,input.revision])}
         } else if input.revision == 0 {
-            db.execute("INSERT INTO games(user_id,revision,game,updated_at) VALUES (?1,1,?2,?3) ON CONFLICT(user_id) DO NOTHING",params![id,json,now() as i64])
+            db.execute(&format!("INSERT INTO {}(user_id,revision,game,updated_at) VALUES (?1,1,?2,?3) ON CONFLICT(user_id) DO NOTHING",account.games()),params![id,json,now() as i64])
         } else {
-            db.execute("UPDATE games SET revision=revision+1,game=?2,updated_at=?3 WHERE user_id=?1 AND revision=?4",params![id,json,now() as i64,input.revision])
+            db.execute(&format!("UPDATE {} SET revision=revision+1,game=?2,updated_at=?3 WHERE user_id=?1 AND revision=?4",account.games()),params![id,json,now() as i64,input.revision])
         }.map_err(internal)?;
         if changed != 1 { return Err((StatusCode::CONFLICT,"Game changed on another device")); }
         // No need to echo the entire game and history after every save.
@@ -654,5 +761,185 @@ mod tests {
         }
         drop(reopened);
         std::fs::remove_file(path).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod vk_integration {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+    async fn req(
+        app: Router,
+        method: &str,
+        path: &str,
+        proof: &str,
+        body: Option<serde_json::Value>,
+    ) -> (StatusCode, serde_json::Value) {
+        let mut r = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("authorization", proof);
+        if body.is_some() {
+            r = r.header("content-type", "application/json")
+        }
+        let out = app
+            .oneshot(
+                r.body(Body::from(body.map(|v| v.to_string()).unwrap_or_default()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let code = out.status();
+        let bytes = out.into_body().collect().await.unwrap().to_bytes();
+        (code, serde_json::from_slice(&bytes).unwrap_or_default())
+    }
+    fn config() -> vk::Config {
+        vk::Config {
+            app_id: 123,
+            secret: "vk-test-secret".into(),
+        }
+    }
+    #[tokio::test]
+    async fn vk_accounts_slots_revisions_and_disk_restore() {
+        let path = format!(
+            "/tmp/spider-vk-{}-{}.sqlite3",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        );
+        let app = router_with_vk(
+            database(&path).unwrap(),
+            "tg-test".into(),
+            Some(config()),
+            vec![],
+        );
+        let a = format!("vk {}", vk::signed(777, 123, now()));
+        let b = format!("vk {}", vk::signed(778, 123, now()));
+        for (slot, kind) in [
+            ("regular", spider_engine::Kind::Spider),
+            ("klondike_regular", spider_engine::Kind::Klondike),
+            ("tripeaks_regular", spider_engine::Kind::Tripeaks),
+        ] {
+            let mut game = Session::new(kind, 42, spider_engine::Mode::Four);
+            match &mut game {
+                Session::Spider(g) => g.deal().unwrap(),
+                Session::Klondike(g) => g.apply(spider_engine::klondike::Command::Draw).unwrap(),
+                Session::Tripeaks(g) => g.apply(spider_engine::tripeaks::Command::Draw).unwrap(),
+            };
+            let body = serde_json::json!({"revision":0,"game":game});
+            let url = format!("/api/game/{slot}");
+            assert_eq!(
+                req(app.clone(), "PUT", &url, &a, Some(body.clone()))
+                    .await
+                    .0,
+                StatusCode::OK
+            );
+            assert_eq!(
+                req(app.clone(), "PUT", &url, &a, Some(body)).await.0,
+                StatusCode::CONFLICT
+            );
+            let (_, other) = req(app.clone(), "GET", &url, &b, None).await;
+            assert!(other["game"].is_null());
+            let reopened = router_with_vk(
+                database(&path).unwrap(),
+                String::new(),
+                Some(config()),
+                vec![],
+            );
+            let (_, saved) = req(reopened, "GET", &url, &a, None).await;
+            assert_eq!(saved["user_id"], 777);
+            assert_eq!(saved["revision"], 1);
+            assert_eq!(Session::restore(&saved["game"].to_string()).unwrap(), game);
+        }
+        // Same numeric id on Telegram has an independent legacy row.
+        let mut fields = BTreeMap::from([
+            ("auth_date".to_string(), now().to_string()),
+            ("user".into(), "{\"id\":777}".into()),
+        ]);
+        let check = fields
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut secret = HmacSha256::new_from_slice(b"WebAppData").unwrap();
+        secret.update(b"tg-test");
+        let mut sig = HmacSha256::new_from_slice(&secret.finalize().into_bytes()).unwrap();
+        sig.update(check.as_bytes());
+        fields.insert("hash".into(), hex::encode(sig.finalize().into_bytes()));
+        let tg = format!("tma {}", serde_urlencoded::to_string(fields).unwrap());
+        let (_, tg_empty) = req(app.clone(), "GET", "/api/game", &tg, None).await;
+        assert!(tg_empty["game"].is_null());
+        let game = Session::new(spider_engine::Kind::Spider, 99, spider_engine::Mode::One);
+        assert_eq!(
+            req(
+                app.clone(),
+                "PUT",
+                "/api/game",
+                &tg,
+                Some(serde_json::json!({"revision":0,"game":game}))
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        let (_, vk_saved) = req(app.clone(), "GET", "/api/game", &a, None).await;
+        assert_ne!(vk_saved["game"], serde_json::to_value(game).unwrap());
+        assert_eq!(
+            req(
+                app,
+                "GET",
+                "/api/game",
+                &a.replace("vk_user_id=777", "vk_user_id=778"),
+                None
+            )
+            .await
+            .0,
+            StatusCode::UNAUTHORIZED
+        );
+    }
+    #[tokio::test]
+    async fn cors_is_exact_and_never_replaces_auth() {
+        let app = router_with_vk(
+            database(":memory:").unwrap(),
+            String::new(),
+            Some(config()),
+            vec!["https://app.example.vk-apps.com".into()],
+        );
+        for (origin, expected) in [
+            ("https://app.example.vk-apps.com", StatusCode::NO_CONTENT),
+            ("https://evil.example", StatusCode::FORBIDDEN),
+        ] {
+            let r = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method("OPTIONS")
+                        .uri("/api/game")
+                        .header("origin", origin)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(r.status(), expected);
+            if expected == StatusCode::NO_CONTENT {
+                assert_eq!(r.headers()["access-control-allow-origin"], origin);
+            }
+        }
+        let r = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/game")
+                    .header("origin", "https://app.example.vk-apps.com")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
     }
 }

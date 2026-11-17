@@ -1,1 +1,1 @@
-window.SPIDER_CONFIG = {"publicUrl": "https://spider.85-137-95-37.sslip.io/", "botUsername": "spidercardgame_bot", "appShortName": "", "vkAppId": ""};
+window.SPIDER_CONFIG = {"publicUrl": "https://spider.85-137-95-37.sslip.io/", "botUsername": "spidercardgame_bot", "appShortName": "", "vkAppId": "54898968", "vkApiUrl": "https://spider.62-109-4-100.sslip.io"};

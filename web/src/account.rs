@@ -22,6 +22,7 @@ struct Cached {
 #[derive(Default)]
 struct Client {
     auth: String,
+    vk: bool,
     key: String,
     queues: HashMap<String, SaveQueue>,
     active: String,
@@ -66,12 +67,36 @@ pub fn key() -> String {
 fn queue<R>(slot: &str, f: impl FnOnce(&mut SaveQueue) -> R) -> R {
     CLIENT.with(|c| f(c.borrow_mut().queues.entry(slot.into()).or_default()))
 }
+fn platform_name() -> &'static str {
+    if CLIENT.with(|c| c.borrow().vk) {
+        "VK"
+    } else {
+        "Telegram"
+    }
+}
+fn account_note() -> String {
+    format!("Аккаунт {} · прогресс сохранён", platform_name())
+}
+fn config(name: &str) -> String {
+    let w = web_sys::window().unwrap();
+    js_sys::Reflect::get(&w, &"SPIDER_CONFIG".into())
+        .ok()
+        .and_then(|c| js_sys::Reflect::get(&c, &name.into()).ok())
+        .and_then(|v| v.as_string())
+        .unwrap_or_default()
+}
 fn endpoint(slot: &str) -> String {
-    if slot == "regular" {
+    let path = if slot == "regular" {
         "/api/game".into()
     } else {
         format!("/api/game/{slot}")
-    }
+    };
+    let base = if CLIENT.with(|c| c.borrow().vk) {
+        config("vkApiUrl")
+    } else {
+        String::new()
+    };
+    format!("{}{path}", base.trim_end_matches('/'))
 }
 pub fn valid_slot(slot: &str) -> bool {
     spider_engine::deal::valid_slot(slot)
@@ -158,14 +183,18 @@ pub fn persist(game: &Game) -> Result<(), ()> {
 }
 async fn remote(auth: &str, slot: &str) -> Result<Remote, &'static str> {
     let response = Request::get(&endpoint(slot))
-        .header("Authorization", &format!("tma {auth}"))
+        .header("Authorization", auth)
         .send()
         .await
         .map_err(
             |_| "Не удалось связаться с сервером. Проверьте соединение и переоткройте игру.",
         )?;
     if response.status() == 401 {
-        return Err("Не удалось подтвердить аккаунт. Переоткройте игру из Telegram.");
+        return Err(if CLIENT.with(|c| c.borrow().vk) {
+            "Не удалось подтвердить аккаунт. Переоткройте игру из VK."
+        } else {
+            "Не удалось подтвердить аккаунт. Переоткройте игру из Telegram."
+        });
     }
     if !response.ok() {
         return Err("Сохранения временно недоступны. Переоткройте игру позже.");
@@ -186,14 +215,30 @@ pub async fn initialize() -> Result<(), &'static str> {
         loc.hash().unwrap_or_default().trim_start_matches('#'),
     )
     .unwrap();
-    if query.get("demo").as_deref() == Some("1") {
+    let vk_launch = query.has("vk_app_id") || query.has("vk_user_id") || query.has("sign");
+    if query.get("demo").as_deref() == Some("1")
+        && !vk_launch
+        && !query.has("tgWebAppPlatform")
+        && !hash.has("tgWebAppData")
+    {
         CLIENT.with(|c| c.borrow_mut().key = "spider.demo.v1".into());
         return Ok(());
     }
-    let auth = hash
+    let tg = hash
         .get("tgWebAppData")
         .or_else(|| query.get("tgWebAppData"));
-    let Some(auth) = auth else {
+    let auth = if vk_launch {
+        if tg.is_some() || !query.has("sign") || !query.has("vk_user_id") {
+            return Err("Переоткройте игру из VK для входа в аккаунт.");
+        }
+        CLIENT.with(|c| c.borrow_mut().vk = true);
+        format!(
+            "vk {}",
+            loc.search().unwrap_or_default().trim_start_matches('?')
+        )
+    } else if let Some(tg) = tg {
+        format!("tma {tg}")
+    } else {
         if query.has("tgWebAppPlatform") || hash.has("tgWebAppPlatform") {
             return Err("Переоткройте игру из Telegram для входа в аккаунт.");
         }
@@ -208,10 +253,17 @@ pub async fn initialize() -> Result<(), &'static str> {
     let r = remote(&auth, "regular").await?;
     CLIENT.with(|c| {
         let mut c = c.borrow_mut();
-        c.key = format!("spider.telegram.{}.v1", r.user_id);
+        c.key = format!(
+            "spider.{}.{}.v1",
+            if c.vk { "vk" } else { "telegram" },
+            r.user_id
+        );
         c.auth = auth;
         c.active = "regular".into();
-        c.note = "Аккаунт Telegram · прогресс сохранён".into();
+        c.note = format!(
+            "Аккаунт {} · прогресс сохранён",
+            if c.vk { "VK" } else { "Telegram" }
+        );
     });
     load_remote("regular", r)?;
     let offer_legacy = legacy().is_some()
@@ -303,14 +355,12 @@ pub fn activate(slot: &str) -> Result<(), &'static str> {
         start_slot(slot);
         return Ok(());
     }
-    notify(
-        if is_cloud() {
-            "Аккаунт Telegram · личная партия"
-        } else {
-            "Гостевая игра · прогресс на этом устройстве"
-        },
-        false,
-    );
+    let note = if is_cloud() {
+        account_note()
+    } else {
+        "Гостевая игра · прогресс на этом устройстве".into()
+    };
+    notify(&note, false);
     start_slot(slot);
     Ok(())
 }
@@ -385,7 +435,7 @@ async fn flush(slot: String) {
         notify_slot(&slot, "Сохраняем прогресс…", false);
         let body = serde_json::json!({"revision":revision,"game":game});
         let response = match Request::put(&endpoint(&slot))
-            .header("Authorization", &format!("tma {auth}"))
+            .header("Authorization", &auth)
             .json(&body)
         {
             Ok(request) => request.send().await.ok(),
@@ -416,7 +466,7 @@ async fn flush(slot: String) {
                     false,
                 );
             } else {
-                notify_slot(&slot, "Аккаунт Telegram · прогресс сохранён", false);
+                notify_slot(&slot, &account_note(), false);
             }
         } else {
             queue(&slot, |q| q.fail(game, code == Some(409)));
@@ -427,7 +477,7 @@ async fn flush(slot: String) {
                         "Партия изменена на другом устройстве. Загрузите её, чтобы продолжить синхронизацию."
                     }
                     Some(401) => {
-                        "Вход устарел. Переоткройте игру из Telegram; ходы сохранены на устройстве."
+                        "Вход устарел. Переоткройте игру из своей платформы; ходы сохранены на устройстве."
                     }
                     _ => "Нет синхронизации. Ходы сохранены на устройстве — повторите отправку.",
                 },

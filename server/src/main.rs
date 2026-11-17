@@ -29,18 +29,44 @@ async fn main() {
         println!("SQLite backup complete");
         return;
     }
-    let token = std::env::var("TELEGRAM_BOT_TOKEN").expect("TELEGRAM_BOT_TOKEN required");
-    assert!(!token.trim().is_empty(), "TELEGRAM_BOT_TOKEN required");
+    let token = std::env::var("TELEGRAM_BOT_TOKEN").unwrap_or_default();
+    let vk_id = std::env::var("VK_APP_ID").unwrap_or_default();
+    let vk_secret = std::env::var("VK_APP_SECRET").unwrap_or_default();
+    let vk = if vk_id.is_empty() && vk_secret.is_empty() {
+        None
+    } else {
+        Some(spider_server::vk::Config {
+            app_id: vk_id.parse().expect("numeric VK_APP_ID required"),
+            secret: vk_secret,
+        })
+    };
+    assert!(
+        !token.trim().is_empty()
+            || vk
+                .as_ref()
+                .is_some_and(|c| c.app_id > 0 && !c.secret.is_empty()),
+        "Configure Telegram or VK authentication"
+    );
+    let origins = std::env::var("SPIDER_ALLOWED_ORIGINS")
+        .unwrap_or_default()
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect();
     let path = std::env::var("SPIDER_DB").unwrap_or_else(|_| "/data/spider.sqlite3".into());
     let db = spider_server::database(&path).expect("open database");
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8082")
         .await
         .expect("listen");
     println!("spider API listening on 8082");
-    axum::serve(listener, spider_server::router(db, token))
-        .with_graceful_shutdown(async {
-            tokio::signal::ctrl_c().await.ok();
-        })
-        .await
-        .expect("server");
+    axum::serve(
+        listener,
+        spider_server::router_with_vk(db, token, vk, origins),
+    )
+    .with_graceful_shutdown(async {
+        tokio::signal::ctrl_c().await.ok();
+    })
+    .await
+    .expect("server");
 }

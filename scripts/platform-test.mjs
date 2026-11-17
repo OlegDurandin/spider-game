@@ -12,7 +12,7 @@ async function run({ search = '', hash = '', sdk, fail = false } = {}) {
   vm.runInNewContext(source, context);
   listeners['spider-ready']();
   await new Promise(resolve => setImmediate(resolve));
-  return { calls, scripts, styles, events, window };
+  return { calls, scripts, styles, events, window, context };
 }
 let r = await run(); assert.equal(r.scripts.length, 0);
 r = await run({ hash: '#tgWebAppData=test', sdk: calls => ({ Telegram: { WebApp: {
@@ -34,3 +34,9 @@ assert.equal(typeof backClick,'function');assert.deepEqual(r.calls,['back-hide']
 r.window.spiderSetBackVisible(true);backClick();r.window.spiderSetBackVisible(false);
 assert.deepEqual(r.calls,['back-hide','back-show','back-hide']);assert.deepEqual(r.events,['spider-platform-ready','spider-back']);
 console.log('Telegram Back: visibility and one app-back event verified.');
+
+let onVk;
+r=await run({search:'?vk_app_id=123',sdk:calls=>({vkBridge:{send:async method=>calls.push(method),subscribe:fn=>onVk=fn}})});
+onVk({detail:{type:'VKWebAppLocationChanged',data:{location:'/deal/t1_1_0123456789abcdef'}}});
+assert.equal(r.context.location.hash,'#/deal/t1_1_0123456789abcdef');assert.deepEqual(r.events,['hashchange']);
+console.log('VK incoming invitation is delivered to the existing release navigation.');
