@@ -3,6 +3,10 @@
 
 VK-версия Пасьянса: `https://spider.62-109-4-100.sslip.io/`,
 VPS `62.109.4.100`, каталог `/opt/bots/bots/spider-vk`.
+Первая выкладка 17.11.2026: `spider-vk-web:local-b837e292f5a7`,
+`spider-vk-api:local-103eb85cbde3`, оба healthy.
+Caddy backup: `/opt/bots/backups/spider-vk-20261117T145946Z/`.
+
 Web — `spider-vk-web`, `127.0.0.1:8094`; API — `spider-vk-api`, без внешнего порта.
 Том `spider-vk_user-data`, SQLite `/data/spider.sqlite3`. Telegram остаётся на своём VPS.
 
