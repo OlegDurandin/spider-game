@@ -413,7 +413,7 @@ fn pointer_up(event: PointerEvent) {
         cancel();
     }
 }
-pub fn install(controls: Controls) {
+pub fn install(_controls: Controls) {
     let window = web_sys::window().unwrap();
     let moved = Closure::<dyn FnMut(PointerEvent)>::new(pointer_move);
     window
@@ -456,9 +456,6 @@ pub fn install(controls: Controls) {
         Closure::<dyn FnMut(web_sys::KeyboardEvent)>::new(move |ev: web_sys::KeyboardEvent| {
             if ev.key() == "Escape" {
                 cancel();
-                if controls.dialog.get_untracked() != Dialog::Corrupt {
-                    controls.dialog.set(Dialog::None);
-                }
             }
         });
     window

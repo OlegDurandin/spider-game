@@ -1,5 +1,6 @@
 mod account;
 mod drag;
+mod help;
 mod input;
 mod klondike;
 mod motion;
@@ -233,6 +234,13 @@ fn App() -> impl IntoView {
         slot: active_slot,
         loading,
         future_kind,
+        help: RwSignal::new(help::Context::capture(
+            session.get_untracked().kind(),
+            session.get_untracked().spider_mode(),
+            future_kind.get_untracked(),
+            new_mode.get_untracked(),
+            Dialog::None,
+        )),
     };
     release::record_result(&session.get_untracked());
     let animating = RwSignal::new(false);
@@ -302,6 +310,7 @@ fn App() -> impl IntoView {
                     <button class="new-game" disabled=move||loading.get() aria-label="Новая игра" on:click=move |_| {release_ui.open_new();}>
                         <span aria-hidden="true">"↻"</span><span>"Новая"<br/>"игра"</span>
                     </button>
+                    <button class="help-entry" disabled=move||loading.get() || animating.get() || dragging.get() aria-label="Как играть" on:click=move |_|release_ui.open_help()>"?"</button>
                     <button class="pause" disabled=move||loading.get() aria-label="Пауза" on:click=move |_| {drag::cancel();motion::cancel();dialog.set(Dialog::Pause);}>"Ⅱ"</button>
                 </div>
             </header>

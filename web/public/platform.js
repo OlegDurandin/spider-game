@@ -7,6 +7,12 @@
   });
   let ready = false;
   let telegram;
+  let backVisible = false;
+  window.spiderSetBackVisible = (visible) => {
+    backVisible = !!visible;
+    const button = telegram?.BackButton;
+    if (backVisible) button?.show?.(); else button?.hide?.();
+  };
   const sync = () => {
     if (!telegram) return;
     const root = document.documentElement;
@@ -22,6 +28,8 @@
     load('https://telegram.org/js/telegram-web-app.js').then(() => {
       telegram = window.Telegram?.WebApp;
       if (!telegram) return;
+      telegram.BackButton?.onClick?.(() => window.dispatchEvent(new Event('spider-back')));
+      window.spiderSetBackVisible(backVisible);
       telegram.expand(); telegram.setHeaderColor?.('#003c2a'); telegram.setBackgroundColor?.('#003c2a');
       ['viewportChanged', 'safeAreaChanged', 'contentSafeAreaChanged'].forEach(e => telegram.onEvent(e, sync));
       if (ready) telegram.ready(); sync();

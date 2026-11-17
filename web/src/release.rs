@@ -15,8 +15,41 @@ pub struct Ui {
     pub slot: RwSignal<String>,
     pub loading: RwSignal<bool>,
     pub future_kind: RwSignal<Kind>,
+    pub help: RwSignal<crate::help::Context>,
 }
 impl Ui {
+    pub fn open_help(self) {
+        let from = self.dialog.get_untracked();
+        if from == Dialog::Help {
+            return;
+        }
+        let game = self.game.get_untracked();
+        self.help.set(crate::help::Context::capture(
+            game.kind(),
+            game.spider_mode(),
+            self.future_kind.get_untracked(),
+            self.mode.get_untracked(),
+            from,
+        ));
+        drag::cancel();
+        if let Some(w) = web_sys::window() {
+            if let Ok(h) = w.history() {
+                h.push_state_with_url(&"spider-help".into(), "", None).ok();
+            }
+        }
+        self.dialog.set(Dialog::Help);
+    }
+    fn close_help(self) {
+        self.dialog.set(self.help.get_untracked().return_to);
+        if let Some(w) = web_sys::window() {
+            if let Ok(h) = w.history() {
+                if h.state().ok().and_then(|s| s.as_string()).as_deref() == Some("spider-help") {
+                    h.back().ok();
+                }
+            }
+        }
+    }
+
     pub fn open_new(self) {
         drag::cancel();
         motion::cancel();
@@ -266,6 +299,10 @@ pub fn ReleaseMenu(ui: Ui, animating: RwSignal<bool>) -> impl IntoView {
     let recover_regular = RwSignal::new(false);
 
     let close = move || {
+        if ui.dialog.get_untracked() == Dialog::Help {
+            ui.close_help();
+            return;
+        }
         ui.dialog.set(match ui.dialog.get_untracked() {
             Dialog::Actions => {
                 if ui.game.get_untracked().finished() {
@@ -300,6 +337,31 @@ pub fn ReleaseMenu(ui: Ui, animating: RwSignal<bool>) -> impl IntoView {
         .add_event_listener_with_callback("keydown", escape.as_ref().unchecked_ref())
         .ok();
     escape.forget();
+    let browser_back = Closure::<dyn FnMut()>::new(move || {
+        if ui.dialog.get_untracked() == Dialog::Help {
+            ui.dialog.set(ui.help.get_untracked().return_to);
+        }
+    });
+    window
+        .add_event_listener_with_callback("popstate", browser_back.as_ref().unchecked_ref())
+        .ok();
+    browser_back.forget();
+    let platform_back = Closure::<dyn FnMut()>::new(move || {
+        if ui.dialog.get_untracked() != Dialog::None && !ui.loading.get_untracked() {
+            close();
+        }
+    });
+    window
+        .add_event_listener_with_callback("spider-back", platform_back.as_ref().unchecked_ref())
+        .ok();
+    platform_back.forget();
+    Effect::new(move |_| {
+        js(
+            "spiderSetBackVisible",
+            &[(ui.dialog.get() != Dialog::None).into()],
+        )
+        .ok();
+    });
 
     // Read the ordinary slot, irrespective of the table from which this panel opened.
     Effect::new(move |_| {
@@ -420,13 +482,14 @@ pub fn ReleaseMenu(ui: Ui, animating: RwSignal<bool>) -> impl IntoView {
     view! {
      <Show when=move ||ui.dialog.get()!=Dialog::None || (ui.game.get().finished() && !animating.get())>
       <div class="overlay compact-overlay" on:click=move |e|e.stop_propagation() on:pointerdown=move |e|e.stop_propagation()>
-       <section class="modal app-panel" class:new-game-panel=move ||ui.dialog.get()==Dialog::ConfirmNew role="dialog" aria-modal="true" aria-label=move ||match ui.dialog.get(){Dialog::ConfirmNew=>"Новая игра",Dialog::Pause=>"Пауза",Dialog::Actions=>"Действия с раскладом",Dialog::Parties=>"Мои партии",Dialog::Repeat=>"Повтор расклада",Dialog::Share=>"Поделиться раскладом",Dialog::Help=>"Как играть",Dialog::Preview=>"Открыть расклад",Dialog::Corrupt=>"Сохранение повреждено",Dialog::None=>if ui.game.get().stuck(){"Ходов нет"}else{"Победа"}}>
+       <section class="modal app-panel" class:new-game-panel=move ||ui.dialog.get()==Dialog::ConfirmNew class:help-panel=move||ui.dialog.get()==Dialog::Help role="dialog" aria-modal="true" aria-label=move ||match ui.dialog.get(){Dialog::ConfirmNew=>"Новая игра",Dialog::Pause=>"Пауза",Dialog::Actions=>"Действия с раскладом",Dialog::Parties=>"Мои партии",Dialog::Repeat=>"Повтор расклада",Dialog::Share=>"Поделиться раскладом",Dialog::Help=>"Как играть",Dialog::Preview=>"Открыть расклад",Dialog::Corrupt=>"Сохранение повреждено",Dialog::None=>if ui.game.get().stuck(){"Ходов нет"}else{"Победа"}}>
         {move ||match ui.dialog.get() {
           Dialog::ConfirmNew=>view!{
             <div class="panel-heading"><h2>"Новая игра"</h2><button class="icon-button" aria-label="Закрыть новую игру" on:click=move |_|close()>"×"</button></div>
             <div class="game-picker mode-picker" role="radiogroup" aria-label="Вид пасьянса">
               { [Kind::Spider,Kind::Klondike,Kind::Tripeaks].into_iter().map(|kind|view!{<button type="button" role="radio" disabled=move||ui.loading.get() aria-checked=move||(ui.future_kind.get()==kind).to_string() class:chosen=move||ui.future_kind.get()==kind on:click=move |_|ui.future_kind.set(kind)>{kind.name()}</button>}).collect_view() }
             </div>
+            <button class="new-help text-button" on:click=move |_|ui.open_help()>"Как играть?"</button>
             <Show when=move||ui.future_kind.get()==Kind::Spider fallback=move||view!{<p class="variant-label">{move||if ui.future_kind.get()==Kind::Tripeaks{"Один проход запаса"}else{"По одной карте"}}</p>}>
             <div class="mode-picker" role="radiogroup" aria-label="Количество мастей">
               {Mode::ALL.into_iter().map(|m|view!{<button type="button" role="radio" aria-checked=move ||(ui.mode.get()==m).to_string() class:chosen=move ||ui.mode.get()==m on:click=move |_|ui.mode.set(m)>{m.label()}</button>}).collect_view()}
@@ -455,7 +518,7 @@ pub fn ReleaseMenu(ui: Ui, animating: RwSignal<bool>) -> impl IntoView {
                 <button disabled=move ||ui.loading.get() on:click=move |_|share(ui,sharing)>"Поделиться раскладом"</button>
               </div>
             </Show>
-            <button class="row-button" on:click=move |_|ui.dialog.set(Dialog::Help)>"Как играть"</button>
+            <button class="row-button" on:click=move |_|ui.open_help()>"Как играть"</button>
             <Show when=move ||ui.game.get().finished() && (ui.game.get().history_len()>0)><button class="row-button" on:click=move |_|{ui.undo();}>"Отменить последний ход"</button></Show>
             <Show when=move ||ui.game.get().finished()><div class="panel-rows"><button on:click=move |_|preview(spider_engine::deal::daily((js_sys::Date::now()/1000.) as i64).code(),true,ui,pending)>{move||if ui.game.get().kind()!=Kind::Spider{"Расклад дня · Паук"}else{"Расклад дня"}}</button><button on:click=move |_|ui.dialog.set(Dialog::Parties)>"Мои партии"</button></div></Show>
           }.into_any(),
@@ -493,18 +556,7 @@ pub fn ReleaseMenu(ui: Ui, animating: RwSignal<bool>) -> impl IntoView {
             <Show when=move ||!ui.notice.get().is_empty()><p role="status">{move ||ui.notice.get()}</p></Show>
             <button on:click=move |_|ui.dialog.set(Dialog::None)>"Вернуться к игре"</button>
           }.into_any(),
-          Dialog::Help=>view!{
-            <div class="panel-heading"><h2>"Как играть"</h2><button class="icon-button" aria-label="Назад к действиям" on:click=move |_|ui.dialog.set(Dialog::Actions)>"×"</button></div>
-            <Show when=move||ui.game.get().kind()==Kind::Tripeaks><p>"Снимайте свободные карты на ранг выше или ниже сброса. Туз соседствует с королём и двойкой, масть любая. Карта открывается после снятия двух перекрывающих её карт. Запас сдаётся по одной карте, один раз. Снимите все 28 карт. Подсказка выделяет карту или запас; отмена возвращает весь предыдущий ход и цепочку, в том числе после результата."</p></Show>
-            <Show when=move||ui.game.get().kind()!=Kind::Tripeaks>
-            <Show when=move||ui.game.get().kind()==Kind::Klondike fallback=||view!{<p>"Соберите восемь серий одной масти от короля до туза. На карту старше можно класть любую масть; переносить группу можно только одной масти и по порядку. В пустой столбец можно положить любую допустимую группу. Перед раздачей ряда заполните все столбцы."</p>}>
-             <p>"Соберите четыре дома одной масти: туз, двойка и далее до короля. В дом можно перенести только одну свободную карту — со стола или верхнюю из сброса."</p>
-             <p>"На столе кладите младшую карту на старшую, чередуя красный и чёрный цвета. Можно переносить любой открытый хвост с таким порядком. Пустой столбец принимает короля или группу с королём."</p>
-             <p>"Касание запаса открывает одну карту в сброс. Когда запас пуст, отдельное касание переворачивает оставшийся сброс без перемешивания. Проходы не ограничены. Верхнюю карту дома можно вернуть на стол."</p>
-             <p>"Каждый перенос, открытие из запаса и переворот сброса — один ход. Открытие закрытой карты после переноса входит в тот же ход. Отмена полностью возвращает предыдущую позицию и счётчик. Цель — все 52 карты в домах."</p>
-            </Show></Show>
-            <button on:click=move |_|ui.dialog.set(Dialog::None)>"Вернуться к столу"</button>
-          }.into_any(),
+          Dialog::Help=>view!{<crate::help::Screen context=ui.help.get_untracked() on_back=Callback::new(move |_|close())/>}.into_any(),
           Dialog::Corrupt=>view!{
             <div class="panel-heading"><h2>"Сохранение повреждено"</h2></div><p>"Не удалось восстановить партию. Начните новую игру."</p>
             <button class="primary" on:click=move |_|{recover_regular.set(!account::is_cloud() && ui.slot.get_untracked()==ui.game.get_untracked().kind().regular_slot());ui.open_new();}>"Новая игра"</button>
@@ -520,7 +572,7 @@ pub fn ReleaseMenu(ui: Ui, animating: RwSignal<bool>) -> impl IntoView {
             <Show when=move ||ui.game.get().deal_id().is_some() fallback=||view!{<p class="legacy-note">"Для прежней партии ссылка недоступна."</p>}><button on:click=move |_|share(ui,sharing)>"Вызвать друга"</button></Show>
           }.into_any(),
         }}
-        <Show when=move ||ui.dialog.get()!=Dialog::ConfirmNew && !ui.notice.get().is_empty() && ui.dialog.get()!=Dialog::Share><p class="panel-status" role="status">{move ||ui.notice.get()}</p></Show>
+        <Show when=move ||ui.dialog.get()!=Dialog::ConfirmNew && !ui.notice.get().is_empty() && ui.dialog.get()!=Dialog::Share && ui.dialog.get()!=Dialog::Help><p class="panel-status" role="status">{move ||ui.notice.get()}</p></Show>
        </section>
       </div>
      </Show>
