@@ -7,5 +7,5 @@ ssh_options=(-o BatchMode=yes -o ConnectTimeout=20 -o ServerAliveInterval=15)
 /usr/bin/python3 deploy/vk/configure.py
 stage=$(ssh "${ssh_options[@]}" "$server" 'mktemp -d /tmp/spider-vk-release.XXXXXXXX')
 [[ "$stage" == /tmp/spider-vk-release.* ]]
-COPYFILE_DISABLE=1 tar --no-xattrs -czf - web/dist web/Cargo.toml Cargo.toml Cargo.lock engine server deploy/nginx.conf deploy/Dockerfile.prebuilt deploy/Dockerfile.api deploy/vk-bots-server deploy/vk/remote.sh | ssh "${ssh_options[@]}" "$server" "tar -xzf - -C '$stage'"
+COPYFILE_DISABLE=1 tar --no-xattrs -czf - web/dist web/Cargo.toml Cargo.toml Cargo.lock engine server deploy/nginx.conf deploy/Dockerfile.prebuilt deploy/Dockerfile.api deploy/vk-bots-server deploy/vk/remote.sh deploy/vk/Dockerfile.api | ssh "${ssh_options[@]}" "$server" "tar -xzf - -C '$stage'"
 ssh "${ssh_options[@]}" "$server" "bash '$stage/deploy/vk/remote.sh' '$stage'"

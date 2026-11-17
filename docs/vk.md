@@ -61,6 +61,7 @@ SSH stdin отдельно от исходников/статики. Полны�
 `/opt/bots/backups/spider-vk-<UTC>/`; для уже работающего API создаётся online
 SQLite backup в `/data/backups/`. При ошибке переключения выполняется откат
 образов/Caddy. Тома при этом не удаляются. Не использовать `down -v`.
+Для Docker без BuildKit предусмотрен `deploy/vk/Dockerfile.api` без cache mounts.
 Скрипт меняет только блок `spider-vk` живого Caddy; чужие pending-изменения
 из bots-server не применяются.
 

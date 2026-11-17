@@ -18,7 +18,7 @@ if [ -f "$app/compose.yaml" ]; then cp "$app/compose.yaml" "$backup/compose.befo
 if ss -ltn | grep -q '127.0.0.1:8094 ' && ! docker ps --format '{{.Names}}' | grep -qx spider-vk-web; then
   echo 'Port 8094 belongs to another service' >&2; exit 1
 fi
-docker build -f deploy/Dockerfile.api -t "$api_image" .
+docker build -f deploy/vk/Dockerfile.api -t "$api_image" .
 docker build -f deploy/Dockerfile.prebuilt -t "$image" .
 install -m 644 deploy/vk-bots-server/bots/spider-vk/compose.yaml "$app/compose.yaml"
 install -m 644 deploy/vk-bots-server/bots/spider-vk/bot.conf "$app/bot.conf"
